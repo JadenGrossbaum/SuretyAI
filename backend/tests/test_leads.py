@@ -32,8 +32,8 @@ def test_create_lead(client):
     data = response.json()
     assert data['id'] == 1
     assert data['email'] == 'jordan@example.com'
-    assert data['lead_score'] == 0
-    assert data['lead_status'] == 'new'
+    assert data['lead_score'] == 100
+    assert data['lead_status'] == 'Strong Candidate'
     assert data['created_at']
 
 

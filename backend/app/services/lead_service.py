@@ -3,10 +3,14 @@ from sqlalchemy.orm import Session
 
 from app.models import Lead
 from app.schemas import LeadCreate
+from app.scoring import evaluate_lead
 
 
 def create_lead(db: Session, payload: LeadCreate) -> Lead:
     lead = Lead(**payload.model_dump())
+    score_result = evaluate_lead(lead)
+    lead.lead_score = score_result.score
+    lead.lead_status = score_result.category.value
     db.add(lead)
     db.commit()
     db.refresh(lead)

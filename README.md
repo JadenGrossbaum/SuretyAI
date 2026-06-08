@@ -49,6 +49,18 @@ GET /api/leads/{id}
 
 Lead records capture contractor profile, bond need, financial screening, callback preference, notes, score/status defaults, and creation timestamp. The API stores intake information only and does not approve or deny bonds.
 
+## Preliminary Lead Scoring
+
+Phase 3 adds preliminary review scoring for intake leads. The scoring service outputs only these categories:
+
+~~~text
+Strong Candidate
+Needs Review
+Higher Risk / Human Review Required
+~~~
+
+These categories are triage labels for human surety review. They are not approvals, denials, quotes, or binding decisions.
+
 ## Run Tests
 
 ~~~bash
