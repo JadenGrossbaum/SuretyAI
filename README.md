@@ -61,6 +61,17 @@ Higher Risk / Human Review Required
 
 These categories are triage labels for human surety review. They are not approvals, denials, quotes, or binding decisions.
 
+## Phone Intake Agent Flow
+
+Phase 4 adds the surety phone intake agent prompt and reusable call-flow service:
+
+~~~text
+backend/app/prompts/surety_intake_agent.md
+backend/app/services/call_flow.py
+~~~
+
+The scripted flow greets the caller, explains preliminary screening, asks permission to continue, collects one field at a time, avoids underwriting advice and decision language, and closes by routing the information to human review.
+
 ## Run Tests
 
 ~~~bash
