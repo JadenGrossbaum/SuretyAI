@@ -1,0 +1,31 @@
+New SuretyAI lead created
+
+Lead ID: {lead_id}
+Name: {full_name}
+Company: {company_name}
+Phone: {phone_number}
+Email: {email}
+
+Bond need: {bond_type_needed}
+Contractor type: {contractor_type}
+Interested in public work: {interested_in_public_work}
+Estimated contract amount: {estimated_contract_amount}
+Prior bonding: {has_prior_bonding}
+Current bonding capacity: {current_bonding_capacity}
+
+Lead score: {lead_score}
+Review category: {lead_status}
+Key risk flags:
+{risk_flags}
+
+Credit score range: {credit_score_range}
+Years in business: {years_in_business}
+Annual revenue: {annual_revenue}
+Working capital: {working_capital}
+Has financial statements: {has_financial_statements}
+Preferred callback time: {preferred_callback_time}
+
+Notes:
+{notes}
+
+This notification is for human surety review only. SuretyAI does not make bond decisions, quote final terms, or bind coverage.

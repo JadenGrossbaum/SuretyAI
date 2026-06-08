@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     twilio_auth_token: Optional[str] = None
     twilio_phone_number: Optional[str] = None
     public_base_url: str = 'http://localhost:8000'
+    smtp_host: Optional[str] = None
+    smtp_port: int = 587
+    smtp_username: Optional[str] = None
+    smtp_password: Optional[str] = None
+    internal_notification_email: Optional[str] = None
 
     model_config = SettingsConfigDict(
         env_file='.env',

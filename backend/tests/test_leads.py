@@ -81,3 +81,23 @@ def test_create_lead_rejects_negative_contract_amount(client):
     response = client.post('/api/leads', json=payload)
 
     assert response.status_code == 422
+
+
+def test_create_lead_sends_internal_notification(client, monkeypatch):
+    notification = {'called': False, 'lead_id': None, 'status': None}
+
+    def fake_notify(lead, score_result):
+        notification['called'] = True
+        notification['lead_id'] = lead.id
+        notification['status'] = score_result.category.value
+
+    monkeypatch.setattr('app.services.lead_service.notify_lead_created', fake_notify)
+
+    response = client.post('/api/leads', json=dict(VALID_LEAD, email='notify@example.com'))
+
+    assert response.status_code == 201
+    assert notification == {
+        'called': True,
+        'lead_id': response.json()['id'],
+        'status': 'Strong Candidate',
+    }

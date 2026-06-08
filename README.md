@@ -92,6 +92,20 @@ PUBLIC_BASE_URL=http://localhost:8000
 
 The voice endpoint returns TwiML that greets the caller, explains the MVP is preliminary intake for human review, logs a call session, and stores a system transcript entry. The status endpoint records Twilio call status updates. The call session and transcript models are prepared so the next phase can connect the phone call to an AI voice agent.
 
+## Internal Email Notifications
+
+Phase 6 sends an internal email summary after a lead is created. Configure SMTP in .env:
+
+~~~text
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USERNAME=
+SMTP_PASSWORD=
+INTERNAL_NOTIFICATION_EMAIL=
+~~~
+
+The summary includes contact information, bond need, lead score, review category, key risk flags, financial fields, callback preference, and notes. If SMTP is not configured, lead creation still succeeds and notification sending is skipped.
+
 ## Run Tests
 
 ~~~bash

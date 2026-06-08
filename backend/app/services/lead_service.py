@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.models import Lead
 from app.schemas import LeadCreate
 from app.scoring import evaluate_lead
+from app.services.notification_service import notify_lead_created
 
 
 def create_lead(db: Session, payload: LeadCreate) -> Lead:
@@ -14,6 +15,7 @@ def create_lead(db: Session, payload: LeadCreate) -> Lead:
     db.add(lead)
     db.commit()
     db.refresh(lead)
+    notify_lead_created(lead, score_result)
     return lead
 
 
