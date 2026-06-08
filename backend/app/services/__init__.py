@@ -10,6 +10,7 @@ from app.services.call_flow import (
     get_intake_questions,
     get_questions_for_stage,
 )
+from app.services.call_session_service import add_transcript_entry, create_or_update_call_session
 from app.services.lead_service import create_lead, get_lead, list_leads
 
 __all__ = [
@@ -20,7 +21,9 @@ __all__ = [
     'OPENING_SCRIPT',
     'CallFlowStage',
     'IntakeQuestion',
+    'add_transcript_entry',
     'create_lead',
+    'create_or_update_call_session',
     'get_fallback_response',
     'get_intake_questions',
     'get_lead',

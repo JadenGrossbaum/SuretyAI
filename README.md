@@ -72,6 +72,26 @@ backend/app/services/call_flow.py
 
 The scripted flow greets the caller, explains preliminary screening, asks permission to continue, collects one field at a time, avoids underwriting advice and decision language, and closes by routing the information to human review.
 
+## Twilio Phone Webhooks
+
+Phase 5 adds MVP Twilio webhook support for a dedicated phone number:
+
+~~~text
+POST /api/twilio/voice
+POST /api/twilio/status
+~~~
+
+Configure these environment variables in .env:
+
+~~~text
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_PHONE_NUMBER=
+PUBLIC_BASE_URL=http://localhost:8000
+~~~
+
+The voice endpoint returns TwiML that greets the caller, explains the MVP is preliminary intake for human review, logs a call session, and stores a system transcript entry. The status endpoint records Twilio call status updates. The call session and transcript models are prepared so the next phase can connect the phone call to an AI voice agent.
+
 ## Run Tests
 
 ~~~bash

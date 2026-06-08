@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from app.api.health import router as health_router
 from app.api.leads import router as leads_router
+from app.api.twilio import router as twilio_router
 from app.config import get_settings
 from app.database import init_db
 
@@ -29,6 +30,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(health_router)
     app.include_router(leads_router)
+    app.include_router(twilio_router)
     return app
 
 
