@@ -37,6 +37,18 @@ uvicorn app.main:app --app-dir backend --reload
 
 Open http://127.0.0.1:8000/health.
 
+## Lead Intake API
+
+Phase 2 adds lead intake persistence and read endpoints:
+
+~~~text
+POST /api/leads
+GET /api/leads
+GET /api/leads/{id}
+~~~
+
+Lead records capture contractor profile, bond need, financial screening, callback preference, notes, score/status defaults, and creation timestamp. The API stores intake information only and does not approve or deny bonds.
+
 ## Run Tests
 
 ~~~bash
