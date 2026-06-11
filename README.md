@@ -37,6 +37,61 @@ uvicorn app.main:app --app-dir backend --reload
 
 Open http://127.0.0.1:8000/health.
 
+## Local Developer Workflow
+
+### Open The API Docs
+
+Start the app locally:
+
+~~~bash
+cd /home/jaden/Projects/SuretyAI
+source .venv/bin/activate
+uvicorn app.main:app --app-dir backend --reload
+~~~
+
+Then open these URLs:
+
+~~~text
+http://127.0.0.1:8000/
+http://127.0.0.1:8000/docs
+~~~
+
+The root route returns a small welcome response with links to /docs and /health.
+
+### Seed Sample Leads
+
+To create two sample surety leads in the local SQLite database:
+
+~~~bash
+cd /home/jaden/Projects/SuretyAI
+source .venv/bin/activate
+PYTHONPATH=backend python backend/scripts/seed_leads.py
+~~~
+
+The script is idempotent for its sample email addresses, so rerunning it will print the existing sample leads instead of creating duplicates.
+
+### Create A Lead Through Swagger
+
+1. Start the app with uvicorn app.main:app --app-dir backend --reload.
+2. Open http://127.0.0.1:8000/docs.
+3. Expand POST /api/leads.
+4. Click Try it out.
+5. Paste a JSON request body for a lead.
+6. Click Execute.
+7. Look for the response body. The id field is the database ID for that new lead.
+
+### Find A Lead ID
+
+Use one of these options:
+
+- In Swagger, run GET /api/leads and look at the id field for each lead.
+- Run the seed script and read the printed output, which starts each sample with its ID.
+- After creating a lead with POST /api/leads, use the id returned in the response body.
+
+### Why GET /api/leads/{id} Needs An Existing ID
+
+GET /api/leads/{id} reads one saved database row by its primary key. The {id} value is not a placeholder name or a phone number; it must be a real integer ID that already exists in the SQLite database. If the app has no leads yet, or if you use an ID that does not exist, the API returns 404 Lead not found.
+
 ## Lead Intake API
 
 Phase 2 adds lead intake persistence and read endpoints:
