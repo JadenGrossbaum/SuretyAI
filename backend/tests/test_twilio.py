@@ -1,3 +1,6 @@
+from twilio.request_validator import RequestValidator
+
+from app.config import Settings, get_settings
 from app.models import CallSession, TranscriptEntry
 
 
@@ -54,3 +57,66 @@ def test_twilio_status_creates_call_session_if_status_arrives_first(client, db_s
     assert response.status_code == 200
     assert response.json()['call_status'] == 'busy'
     assert db_session.query(CallSession).filter_by(twilio_call_sid='CA789').count() == 1
+
+
+
+def signed_headers(settings, path, data):
+    signature = RequestValidator(settings.twilio_auth_token).compute_signature(
+        '{}{}'.format(settings.public_base_url.rstrip('/'), path),
+        data,
+    )
+    return {'X-Twilio-Signature': signature}
+
+
+def test_twilio_voice_accepts_valid_signature_when_auth_token_configured(client, db_session):
+    settings = Settings(
+        app_env='production',
+        twilio_auth_token='secret',
+        public_base_url='http://testserver',
+    )
+    client.app.dependency_overrides[get_settings] = lambda: settings
+    data = {
+        'CallSid': 'CA_SIGNED',
+        'From': '+15555550123',
+        'To': '+15555550999',
+        'CallStatus': 'ringing',
+    }
+
+    response = client.post(
+        '/api/twilio/voice',
+        data=data,
+        headers=signed_headers(settings, '/api/twilio/voice', data),
+    )
+
+    assert response.status_code == 200
+    assert db_session.query(CallSession).filter_by(twilio_call_sid='CA_SIGNED').count() == 1
+
+
+def test_twilio_voice_rejects_invalid_signature_when_auth_token_configured(client, db_session):
+    settings = Settings(
+        app_env='production',
+        twilio_auth_token='secret',
+        public_base_url='http://testserver',
+    )
+    client.app.dependency_overrides[get_settings] = lambda: settings
+
+    response = client.post(
+        '/api/twilio/voice',
+        data={'CallSid': 'CA_BAD_SIG'},
+        headers={'X-Twilio-Signature': 'bad-signature'},
+    )
+
+    assert response.status_code == 403
+    assert response.json()['detail'] == 'Invalid Twilio signature'
+    assert db_session.query(CallSession).filter_by(twilio_call_sid='CA_BAD_SIG').count() == 0
+
+
+def test_twilio_status_rejects_production_without_auth_token(client, db_session):
+    settings = Settings(app_env='production', twilio_auth_token=None)
+    client.app.dependency_overrides[get_settings] = lambda: settings
+
+    response = client.post('/api/twilio/status', data={'CallSid': 'CA_NO_TOKEN'})
+
+    assert response.status_code == 403
+    assert response.json()['detail'] == 'Twilio webhook validation is not configured'
+    assert db_session.query(CallSession).filter_by(twilio_call_sid='CA_NO_TOKEN').count() == 0

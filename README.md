@@ -92,6 +92,8 @@ PUBLIC_BASE_URL=http://localhost:8000
 
 The voice endpoint returns TwiML that greets the caller, explains the MVP is preliminary intake for human review, logs a call session, and stores a system transcript entry. The status endpoint records Twilio call status updates. The call session and transcript models are prepared so the next phase can connect the phone call to an AI voice agent.
 
+For live phone testing, set TWILIO_AUTH_TOKEN and PUBLIC_BASE_URL to the exact public webhook base URL configured in Twilio. In non-development environments, Twilio webhooks are rejected unless request signature validation is configured and passes.
+
 ## Internal Email Notifications
 
 Phase 6 sends an internal email summary after a lead is created. Configure SMTP in .env:

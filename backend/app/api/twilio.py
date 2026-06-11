@@ -1,7 +1,8 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Form, Response
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
+from twilio.request_validator import RequestValidator
 from twilio.twiml.voice_response import VoiceResponse
 
 from app.config import Settings, get_settings
@@ -29,7 +30,38 @@ def build_voice_twiml(settings: Settings) -> str:
     return str(response)
 
 
-@router.post('/voice')
+def build_public_webhook_url(request: Request, settings: Settings) -> str:
+    base_url = settings.public_base_url.rstrip('/')
+    url = f'{base_url}{request.url.path}'
+    if request.url.query:
+        url = f'{url}?{request.url.query}'
+    return url
+
+
+async def verify_twilio_request(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> None:
+    if not settings.twilio_auth_token:
+        if settings.app_env == 'development':
+            return
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Twilio webhook validation is not configured',
+        )
+
+    signature = request.headers.get('X-Twilio-Signature', '')
+    form = await request.form()
+    webhook_url = build_public_webhook_url(request, settings)
+    validator = RequestValidator(settings.twilio_auth_token)
+    if not validator.validate(webhook_url, dict(form), signature):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Invalid Twilio signature',
+        )
+
+
+@router.post('/voice', dependencies=[Depends(verify_twilio_request)])
 def inbound_voice(
     CallSid: str = Form(...),
     From: Optional[str] = Form(default=None),
@@ -51,7 +83,7 @@ def inbound_voice(
     return Response(content=build_voice_twiml(settings), media_type='application/xml')
 
 
-@router.post('/status')
+@router.post('/status', dependencies=[Depends(verify_twilio_request)])
 def call_status(
     CallSid: str = Form(...),
     CallStatus: Optional[str] = Form(default=None),
