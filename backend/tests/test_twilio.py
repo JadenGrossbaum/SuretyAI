@@ -1,10 +1,18 @@
 from twilio.request_validator import RequestValidator
 
+from app.api.twilio import FINAL_MESSAGE, INTAKE_STEPS, NO_CONSENT_MESSAGE
 from app.config import Settings, get_settings
 from app.models import CallSession, TranscriptEntry
 
 
-def test_twilio_voice_returns_twiml_and_logs_call(client, db_session):
+def assert_no_decision_language(text: str):
+    forbidden = ['approved', 'denied', 'guaranteed', 'officially qualified']
+    lowered = text.lower()
+    for phrase in forbidden:
+        assert phrase not in lowered
+
+
+def test_twilio_voice_starts_gather_flow_and_logs_call(client, db_session):
     response = client.post(
         '/api/twilio/voice',
         data={
@@ -19,9 +27,12 @@ def test_twilio_voice_returns_twiml_and_logs_call(client, db_session):
     assert response.status_code == 200
     assert response.headers['content-type'].startswith('application/xml')
     assert '<Response>' in response.text
+    assert '<Gather' in response.text
     assert 'Thank you for calling SuretyAI' in response.text
     assert 'human surety professional' in response.text
-    assert 'Voice agent connection is coming in the next phase' in response.text
+    assert 'Is it okay if I ask you a few preliminary intake questions?' in response.text
+    assert '/api/twilio/gather?step=0' in response.text
+    assert_no_decision_language(response.text)
 
     call_session = db_session.query(CallSession).filter_by(twilio_call_sid='CA123').one()
     assert call_session.from_number == '+15555550123'
@@ -32,6 +43,83 @@ def test_twilio_voice_returns_twiml_and_logs_call(client, db_session):
     transcript = db_session.query(TranscriptEntry).filter_by(call_session_id=call_session.id).one()
     assert transcript.speaker == 'system'
     assert 'preliminary surety bond intake' in transcript.text
+
+
+def test_twilio_gather_stores_response_and_asks_next_question(client, db_session):
+    client.post('/api/twilio/voice', data={'CallSid': 'CA_FLOW', 'From': '+1', 'To': '+2'})
+
+    response = client.post(
+        '/api/twilio/gather?step=0',
+        data={'CallSid': 'CA_FLOW', 'SpeechResult': 'yes', 'From': '+1', 'To': '+2'},
+    )
+
+    assert response.status_code == 200
+    assert 'What is your full name?' in response.text
+    assert '/api/twilio/gather?step=1' in response.text
+
+    call_session = db_session.query(CallSession).filter_by(twilio_call_sid='CA_FLOW').one()
+    transcript = (
+        db_session.query(TranscriptEntry)
+        .filter_by(call_session_id=call_session.id, speaker='caller:consent')
+        .one()
+    )
+    assert transcript.text == 'yes'
+
+
+def test_twilio_gather_reprompts_when_no_input(client, db_session):
+    response = client.post('/api/twilio/gather?step=1', data={'CallSid': 'CA_EMPTY'})
+
+    assert response.status_code == 200
+    assert 'I did not catch that' in response.text
+    assert 'What is your full name?' in response.text
+    assert '/api/twilio/gather?step=1' in response.text
+
+    call_session = db_session.query(CallSession).filter_by(twilio_call_sid='CA_EMPTY').one()
+    assert db_session.query(TranscriptEntry).filter_by(call_session_id=call_session.id).count() == 0
+
+
+def test_twilio_gather_no_consent_hangs_up(client, db_session):
+    response = client.post(
+        '/api/twilio/gather?step=0',
+        data={'CallSid': 'CA_NO_CONSENT', 'SpeechResult': 'no'},
+    )
+
+    assert response.status_code == 200
+    assert NO_CONSENT_MESSAGE in response.text
+    assert '<Hangup' in response.text
+    assert_no_decision_language(response.text)
+
+    call_session = db_session.query(CallSession).filter_by(twilio_call_sid='CA_NO_CONSENT').one()
+    speakers = [
+        row.speaker
+        for row in db_session.query(TranscriptEntry)
+        .filter_by(call_session_id=call_session.id)
+        .order_by(TranscriptEntry.id)
+    ]
+    assert speakers == ['caller:consent', 'system']
+
+
+def test_twilio_gather_completes_flow_after_last_step(client, db_session):
+    last_step = len(INTAKE_STEPS) - 1
+
+    response = client.post(
+        f'/api/twilio/gather?step={last_step}',
+        data={'CallSid': 'CA_DONE', 'SpeechResult': 'tomorrow morning'},
+    )
+
+    assert response.status_code == 200
+    assert FINAL_MESSAGE in response.text
+    assert '<Hangup' in response.text
+    assert_no_decision_language(response.text)
+
+    call_session = db_session.query(CallSession).filter_by(twilio_call_sid='CA_DONE').one()
+    speakers = [
+        row.speaker
+        for row in db_session.query(TranscriptEntry)
+        .filter_by(call_session_id=call_session.id)
+        .order_by(TranscriptEntry.id)
+    ]
+    assert speakers == ['caller:preferred_callback_time', 'system']
 
 
 def test_twilio_status_updates_existing_call_session(client, db_session):
@@ -57,7 +145,6 @@ def test_twilio_status_creates_call_session_if_status_arrives_first(client, db_s
     assert response.status_code == 200
     assert response.json()['call_status'] == 'busy'
     assert db_session.query(CallSession).filter_by(twilio_call_sid='CA789').count() == 1
-
 
 
 def signed_headers(settings, path, data):
@@ -90,6 +177,25 @@ def test_twilio_voice_accepts_valid_signature_when_auth_token_configured(client,
 
     assert response.status_code == 200
     assert db_session.query(CallSession).filter_by(twilio_call_sid='CA_SIGNED').count() == 1
+
+
+def test_twilio_gather_accepts_valid_signature_when_auth_token_configured(client, db_session):
+    settings = Settings(
+        app_env='production',
+        twilio_auth_token='secret',
+        public_base_url='http://testserver',
+    )
+    client.app.dependency_overrides[get_settings] = lambda: settings
+    data = {'CallSid': 'CA_GATHER_SIGNED', 'SpeechResult': 'yes'}
+
+    response = client.post(
+        '/api/twilio/gather?step=0',
+        data=data,
+        headers=signed_headers(settings, '/api/twilio/gather?step=0', data),
+    )
+
+    assert response.status_code == 200
+    assert db_session.query(CallSession).filter_by(twilio_call_sid='CA_GATHER_SIGNED').count() == 1
 
 
 def test_twilio_voice_rejects_invalid_signature_when_auth_token_configured(client, db_session):

@@ -1,10 +1,11 @@
 import logging
+from dataclasses import dataclass
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, status
 from sqlalchemy.orm import Session
 from twilio.request_validator import RequestValidator
-from twilio.twiml.voice_response import VoiceResponse
+from twilio.twiml.voice_response import Gather, VoiceResponse
 
 from app.config import Settings, get_settings
 from app.database import get_db
@@ -13,23 +14,88 @@ from app.services.call_session_service import add_transcript_entry, create_or_up
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/twilio', tags=['twilio'])
 
-MVP_GREETING = (
-    'Thank you for calling SuretyAI. This MVP can collect preliminary surety bond intake '
-    'information for review by a human surety professional. It cannot make a bond decision, '
-    'bind coverage, or quote final terms. Voice agent connection is coming in the next phase.'
+INTRO_MESSAGE = (
+    'Thank you for calling SuretyAI. I can collect preliminary surety bond intake '
+    'information for review by a human surety professional. I cannot make a bond decision, '
+    'bind coverage, or quote final terms.'
+)
+FINAL_MESSAGE = (
+    'Thank you. Your preliminary information has been recorded. '
+    'A human surety professional will review it and follow up with you.'
+)
+NO_CONSENT_MESSAGE = (
+    'No problem. A human surety professional can follow up separately. Thank you for calling.'
+)
+NO_INPUT_MESSAGE = 'I did not catch that. Please answer after the tone.'
+
+
+@dataclass(frozen=True)
+class GatherStep:
+    key: str
+    prompt: str
+
+INTAKE_STEPS: tuple[GatherStep, ...] = (
+    GatherStep('consent', 'Is it okay if I ask you a few preliminary intake questions? Please say yes or no.'),
+    GatherStep('full_name', 'What is your full name?'),
+    GatherStep('company_name', 'What company are you calling from, if any?'),
+    GatherStep('phone_number_confirmation', 'Is the number you are calling from the best callback number? If not, please say the best callback number.'),
+    GatherStep('email', 'What is your email address?'),
+    GatherStep('contractor_type', 'What type of contractor or business are you?'),
+    GatherStep('bond_type_needed', 'What type of bond do you need?'),
+    GatherStep('estimated_contract_amount', 'What is the estimated contract or bond amount?'),
+    GatherStep('interested_in_public_work', 'Are you interested in public or government work?'),
+    GatherStep('credit_score_range', 'What credit score range best describes your current credit?'),
+    GatherStep('bankruptcies', 'Have there been any bankruptcies?'),
+    GatherStep('foreclosures', 'Have there been any foreclosures?'),
+    GatherStep('tax_liens', 'Are there any tax liens?'),
+    GatherStep('judgments', 'Are there any judgments?'),
+    GatherStep('bond_claims', 'Have there been any prior bond claims?'),
+    GatherStep('preferred_callback_time', 'What is the best time for a human surety professional to call you back?'),
 )
 
 
 def build_voice_twiml(settings: Settings) -> str:
     response = VoiceResponse()
-    response.say(MVP_GREETING, voice='alice')
-    response.pause(length=1)
-    response.say(
-        'A human surety professional will review any information collected and follow up.',
-        voice='alice',
-    )
+    response.say(INTRO_MESSAGE, voice='alice')
+    append_gather(response, settings, step=0)
+    response.redirect(build_gather_url(settings, step=0), method='POST')
+    return str(response)
+
+
+def build_gather_twiml(settings: Settings, step: int, repeated: bool = False) -> str:
+    response = VoiceResponse()
+    if repeated:
+        response.say(NO_INPUT_MESSAGE, voice='alice')
+    if step >= len(INTAKE_STEPS):
+        response.say(FINAL_MESSAGE, voice='alice')
+        response.hangup()
+        return str(response)
+    append_gather(response, settings, step=step)
+    response.redirect(build_gather_url(settings, step=step), method='POST')
+    return str(response)
+
+def build_no_consent_twiml() -> str:
+    response = VoiceResponse()
+    response.say(NO_CONSENT_MESSAGE, voice='alice')
     response.hangup()
     return str(response)
+
+
+def append_gather(response: VoiceResponse, settings: Settings, step: int) -> None:
+    gather = Gather(
+        input='speech dtmf',
+        action=build_gather_url(settings, step=step),
+        method='POST',
+        timeout=6,
+        speech_timeout='auto',
+    )
+    gather.say(INTAKE_STEPS[step].prompt, voice='alice')
+    response.append(gather)
+
+
+def build_gather_url(settings: Settings, step: int) -> str:
+    base_url = settings.public_base_url.rstrip('/')
+    return f'{base_url}/api/twilio/gather?step={step}'
 
 
 def build_public_webhook_url(request: Request, settings: Settings) -> str:
@@ -65,7 +131,6 @@ def twilio_debug_payload(settings: Settings) -> dict[str, object]:
         'ready_for_live_testing': not missing,
         'missing': missing,
     }
-
 
 async def verify_twilio_request(
     request: Request,
@@ -106,13 +171,7 @@ def inbound_voice(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
-    logger.info(
-        'Twilio voice webhook received call_sid=%s from=%s to=%s status=%s',
-        CallSid,
-        From,
-        To,
-        CallStatus or 'in-progress',
-    )
+    logger.info('Twilio voice webhook received call_sid=%s from=%s to=%s status=%s', CallSid, From, To, CallStatus or 'in-progress')
     call_session = create_or_update_call_session(
         db,
         twilio_call_sid=CallSid,
@@ -121,9 +180,58 @@ def inbound_voice(
         call_status=CallStatus or 'in-progress',
         direction=Direction,
     )
-    add_transcript_entry(db, call_session=call_session, speaker='system', text=MVP_GREETING)
-    logger.info('Twilio voice webhook logged call_session_id=%s call_sid=%s', call_session.id, CallSid)
+    add_transcript_entry(db, call_session=call_session, speaker='system', text=INTRO_MESSAGE)
+    logger.info('Twilio voice webhook started gather flow call_session_id=%s call_sid=%s', call_session.id, CallSid)
     return Response(content=build_voice_twiml(settings), media_type='application/xml')
+
+@router.post('/gather', dependencies=[Depends(verify_twilio_request)])
+def gather_step(
+    step: int = Query(..., ge=0),
+    CallSid: str = Form(...),
+    SpeechResult: Optional[str] = Form(default=None),
+    Digits: Optional[str] = Form(default=None),
+    From: Optional[str] = Form(default=None),
+    To: Optional[str] = Form(default=None),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    call_session = create_or_update_call_session(
+        db,
+        twilio_call_sid=CallSid,
+        from_number=From,
+        to_number=To,
+        call_status='in-progress',
+    )
+    caller_response = normalize_gather_response(SpeechResult, Digits)
+    if not caller_response:
+        return Response(content=build_gather_twiml(settings, step=step, repeated=True), media_type='application/xml')
+
+    if step < len(INTAKE_STEPS):
+        field_name = INTAKE_STEPS[step].key
+        add_transcript_entry(db, call_session=call_session, speaker=f'caller:{field_name}', text=caller_response)
+        logger.info('Twilio gather stored call_sid=%s step=%s field=%s', CallSid, step, field_name)
+        if field_name == 'consent' and is_negative_response(caller_response):
+            add_transcript_entry(db, call_session=call_session, speaker='system', text=NO_CONSENT_MESSAGE)
+            return Response(content=build_no_consent_twiml(), media_type='application/xml')
+
+    next_step = step + 1
+    if next_step >= len(INTAKE_STEPS):
+        add_transcript_entry(db, call_session=call_session, speaker='system', text=FINAL_MESSAGE)
+    return Response(content=build_gather_twiml(settings, step=next_step), media_type='application/xml')
+
+
+def normalize_gather_response(speech_result: Optional[str], digits: Optional[str]) -> str:
+    if speech_result and speech_result.strip():
+        return speech_result.strip()
+    if digits and digits.strip():
+        return digits.strip()
+    return ''
+
+
+def is_negative_response(value: str) -> bool:
+    normalized = value.casefold().strip()
+    return normalized in {'no', 'nope', 'nah', 'not now', 'do not', 'do not continue'}
+
 
 
 @router.post('/status', dependencies=[Depends(verify_twilio_request)])
@@ -150,3 +258,4 @@ def call_status(
         'twilio_call_sid': call_session.twilio_call_sid,
         'call_status': call_session.call_status,
     }
+

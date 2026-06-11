@@ -129,11 +129,13 @@ The scripted flow greets the caller, explains preliminary screening, asks permis
 
 ## Twilio Phone Webhooks
 
-Phase 5 adds MVP Twilio webhook support for a dedicated phone number:
+Twilio webhook support is available for a dedicated phone number:
 
 ~~~text
 POST /api/twilio/voice
+POST /api/twilio/gather?step=N
 POST /api/twilio/status
+GET /api/twilio/debug
 ~~~
 
 Configure these environment variables in .env:
@@ -145,7 +147,24 @@ TWILIO_PHONE_NUMBER=
 PUBLIC_BASE_URL=http://localhost:8000
 ~~~
 
-The voice endpoint returns TwiML that greets the caller, explains the MVP is preliminary intake for human review, logs a call session, and stores a system transcript entry. The status endpoint records Twilio call status updates. The call session and transcript models are prepared so the next phase can connect the phone call to an AI voice agent.
+The voice endpoint starts a structured TwiML Gather intake. It greets the caller, explains that the call collects preliminary information for human surety review, asks for consent, then sends each answer to the generic gather endpoint. Responses are stored as transcript entries on the call session using speaker labels such as caller:full_name, caller:email, and caller:bond_type_needed. The status endpoint records Twilio call status updates.
+
+The phone intake flow asks for:
+
+1. Consent to continue
+2. Full name
+3. Company name
+4. Callback phone confirmation
+5. Email address
+6. Contractor type
+7. Bond type needed
+8. Estimated contract or bond amount
+9. Public or government work interest
+10. Credit score range
+11. Bankruptcy, foreclosure, tax lien, judgment, and prior bond claim history
+12. Preferred callback time
+
+The TwiML flow must not make a bond decision, quote final terms, guarantee an outcome, or state that the caller is officially qualified. It ends by saying a human surety professional will review the information and follow up.
 
 For live phone testing, set TWILIO_AUTH_TOKEN and PUBLIC_BASE_URL to the exact public webhook base URL configured in Twilio. In non-development environments, Twilio webhooks are rejected unless request signature validation is configured and passes.
 
@@ -253,12 +272,12 @@ Also use HTTP POST.
 
 ### 5. Verify Twilio Hits The Backend
 
-Call the Twilio phone number. During a successful MVP call:
+Call the Twilio phone number. During a successful structured intake call:
 
-- Your phone should hear the SuretyAI MVP greeting.
-- The call should end after the greeting.
+- Your phone should hear the SuretyAI greeting and consent prompt.
+- Each answer should advance to the next intake question.
 - GET /api/twilio/debug should show ready_for_live_testing: true when all Twilio variables are set.
-- The local SQLite database should contain a call_sessions row and a transcript_entries row for the system greeting.
+- The local SQLite database should contain a call_sessions row and transcript_entries rows for the system greeting and caller responses.
 
 ### Expected Terminal Logs
 
@@ -266,7 +285,8 @@ In the uvicorn terminal, a successful inbound call should show lines similar to:
 
 ~~~text
 Twilio voice webhook received call_sid=CA... from=+1... to=+1... status=in-progress
-Twilio voice webhook logged call_session_id=1 call_sid=CA...
+Twilio voice webhook started gather flow call_session_id=1 call_sid=CA...
+Twilio gather stored call_sid=CA... step=0 field=consent
 INFO: <twilio-ip>:0 - POST /api/twilio/voice HTTP/1.1 200 OK
 ~~~
 
