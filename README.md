@@ -180,3 +180,102 @@ docker compose up --build
 ~~~
 
 The API listens on http://127.0.0.1:8000.
+
+## Live Twilio Phone Testing
+
+Use this checklist when you are ready to buy or configure a Twilio phone number and route calls to your local FastAPI server.
+
+### 1. Configure .env
+
+Copy .env.example to .env if needed, then set:
+
+~~~text
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your_twilio_auth_token
+TWILIO_PHONE_NUMBER=+15555550123
+PUBLIC_BASE_URL=https://your-ngrok-domain.ngrok-free.app
+~~~
+
+PUBLIC_BASE_URL must be the exact HTTPS base URL that Twilio can reach. Do not include /api/twilio/voice in PUBLIC_BASE_URL.
+
+### 2. Run FastAPI Locally
+
+In one terminal:
+
+~~~bash
+cd /home/jaden/Projects/SuretyAI
+source .venv/bin/activate
+uvicorn app.main:app --app-dir backend --reload --host 0.0.0.0 --port 8000
+~~~
+
+Confirm the local app is running:
+
+~~~text
+http://127.0.0.1:8000/
+http://127.0.0.1:8000/api/twilio/debug
+~~~
+
+The debug endpoint returns booleans for whether Twilio-related environment variables are present. It does not expose TWILIO_AUTH_TOKEN or other secret values.
+
+### 3. Run ngrok
+
+In a second terminal:
+
+~~~bash
+ngrok http 8000
+~~~
+
+Copy the HTTPS forwarding URL from ngrok and set it as PUBLIC_BASE_URL in .env, then restart uvicorn so the new value is loaded.
+
+### 4. Configure Twilio Webhook URL
+
+In Twilio Console, set the phone number voice webhook to:
+
+~~~text
+{PUBLIC_BASE_URL}/api/twilio/voice
+~~~
+
+For example:
+
+~~~text
+https://your-ngrok-domain.ngrok-free.app/api/twilio/voice
+~~~
+
+Use HTTP POST.
+
+Optional status callback URL:
+
+~~~text
+{PUBLIC_BASE_URL}/api/twilio/status
+~~~
+
+Also use HTTP POST.
+
+### 5. Verify Twilio Hits The Backend
+
+Call the Twilio phone number. During a successful MVP call:
+
+- Your phone should hear the SuretyAI MVP greeting.
+- The call should end after the greeting.
+- GET /api/twilio/debug should show ready_for_live_testing: true when all Twilio variables are set.
+- The local SQLite database should contain a call_sessions row and a transcript_entries row for the system greeting.
+
+### Expected Terminal Logs
+
+In the uvicorn terminal, a successful inbound call should show lines similar to:
+
+~~~text
+Twilio voice webhook received call_sid=CA... from=+1... to=+1... status=in-progress
+Twilio voice webhook logged call_session_id=1 call_sid=CA...
+INFO: <twilio-ip>:0 - POST /api/twilio/voice HTTP/1.1 200 OK
+~~~
+
+A successful status callback should show lines similar to:
+
+~~~text
+Twilio status webhook received call_sid=CA... status=completed
+Twilio status webhook updated call_session_id=1 call_sid=CA...
+INFO: <twilio-ip>:0 - POST /api/twilio/status HTTP/1.1 200 OK
+~~~
+
+If Twilio returns 403, check that TWILIO_AUTH_TOKEN matches Twilio Console and that PUBLIC_BASE_URL exactly matches the ngrok HTTPS base URL used in the Twilio webhook configuration.

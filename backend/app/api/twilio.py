@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
@@ -9,6 +10,7 @@ from app.config import Settings, get_settings
 from app.database import get_db
 from app.services.call_session_service import add_transcript_entry, create_or_update_call_session
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/twilio', tags=['twilio'])
 
 MVP_GREETING = (
@@ -38,6 +40,33 @@ def build_public_webhook_url(request: Request, settings: Settings) -> str:
     return url
 
 
+def twilio_debug_payload(settings: Settings) -> dict[str, object]:
+    public_base_url = settings.public_base_url.rstrip('/')
+    voice_webhook_url = f'{public_base_url}/api/twilio/voice'
+    status_webhook_url = f'{public_base_url}/api/twilio/status'
+    missing = [
+        key
+        for key, value in {
+            'TWILIO_ACCOUNT_SID': settings.twilio_account_sid,
+            'TWILIO_AUTH_TOKEN': settings.twilio_auth_token,
+            'TWILIO_PHONE_NUMBER': settings.twilio_phone_number,
+            'PUBLIC_BASE_URL': settings.public_base_url,
+        }.items()
+        if not value
+    ]
+    return {
+        'twilio_account_sid_present': bool(settings.twilio_account_sid),
+        'twilio_auth_token_present': bool(settings.twilio_auth_token),
+        'twilio_phone_number_present': bool(settings.twilio_phone_number),
+        'public_base_url_present': bool(settings.public_base_url),
+        'public_base_url': settings.public_base_url,
+        'voice_webhook_url': voice_webhook_url,
+        'status_webhook_url': status_webhook_url,
+        'ready_for_live_testing': not missing,
+        'missing': missing,
+    }
+
+
 async def verify_twilio_request(
     request: Request,
     settings: Settings = Depends(get_settings),
@@ -55,10 +84,16 @@ async def verify_twilio_request(
     webhook_url = build_public_webhook_url(request, settings)
     validator = RequestValidator(settings.twilio_auth_token)
     if not validator.validate(webhook_url, dict(form), signature):
+        logger.warning('Rejected Twilio webhook with invalid signature path=%s', request.url.path)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='Invalid Twilio signature',
         )
+
+
+@router.get('/debug')
+def twilio_debug(settings: Settings = Depends(get_settings)) -> dict[str, object]:
+    return twilio_debug_payload(settings)
 
 
 @router.post('/voice', dependencies=[Depends(verify_twilio_request)])
@@ -71,6 +106,13 @@ def inbound_voice(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
+    logger.info(
+        'Twilio voice webhook received call_sid=%s from=%s to=%s status=%s',
+        CallSid,
+        From,
+        To,
+        CallStatus or 'in-progress',
+    )
     call_session = create_or_update_call_session(
         db,
         twilio_call_sid=CallSid,
@@ -80,6 +122,7 @@ def inbound_voice(
         direction=Direction,
     )
     add_transcript_entry(db, call_session=call_session, speaker='system', text=MVP_GREETING)
+    logger.info('Twilio voice webhook logged call_session_id=%s call_sid=%s', call_session.id, CallSid)
     return Response(content=build_voice_twiml(settings), media_type='application/xml')
 
 
@@ -92,6 +135,7 @@ def call_status(
     Direction: Optional[str] = Form(default=None),
     db: Session = Depends(get_db),
 ):
+    logger.info('Twilio status webhook received call_sid=%s status=%s', CallSid, CallStatus)
     call_session = create_or_update_call_session(
         db,
         twilio_call_sid=CallSid,
@@ -100,6 +144,7 @@ def call_status(
         call_status=CallStatus,
         direction=Direction,
     )
+    logger.info('Twilio status webhook updated call_session_id=%s call_sid=%s', call_session.id, CallSid)
     return {
         'call_session_id': call_session.id,
         'twilio_call_sid': call_session.twilio_call_sid,

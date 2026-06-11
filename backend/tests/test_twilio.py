@@ -120,3 +120,45 @@ def test_twilio_status_rejects_production_without_auth_token(client, db_session)
     assert response.status_code == 403
     assert response.json()['detail'] == 'Twilio webhook validation is not configured'
     assert db_session.query(CallSession).filter_by(twilio_call_sid='CA_NO_TOKEN').count() == 0
+
+
+def test_twilio_debug_reports_missing_config_without_secrets(client):
+    settings = Settings(
+        twilio_account_sid=None,
+        twilio_auth_token=None,
+        twilio_phone_number=None,
+        public_base_url='http://localhost:8000',
+    )
+    client.app.dependency_overrides[get_settings] = lambda: settings
+
+    response = client.get('/api/twilio/debug')
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data['twilio_account_sid_present'] is False
+    assert data['twilio_auth_token_present'] is False
+    assert data['twilio_phone_number_present'] is False
+    assert data['public_base_url_present'] is True
+    assert data['ready_for_live_testing'] is False
+    assert 'TWILIO_AUTH_TOKEN' in data['missing']
+    assert 'auth_token' not in data
+
+
+def test_twilio_debug_reports_ready_config_without_exposing_secret(client):
+    settings = Settings(
+        twilio_account_sid='AC123',
+        twilio_auth_token='super-secret-token',
+        twilio_phone_number='+15555550123',
+        public_base_url='https://example.ngrok-free.app',
+    )
+    client.app.dependency_overrides[get_settings] = lambda: settings
+
+    response = client.get('/api/twilio/debug')
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data['ready_for_live_testing'] is True
+    assert data['missing'] == []
+    assert data['voice_webhook_url'] == 'https://example.ngrok-free.app/api/twilio/voice'
+    assert data['status_webhook_url'] == 'https://example.ngrok-free.app/api/twilio/status'
+    assert 'super-secret-token' not in response.text
