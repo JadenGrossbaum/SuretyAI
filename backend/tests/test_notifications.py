@@ -1,11 +1,14 @@
 from unittest.mock import Mock
 
 from app.config import Settings
-from app.models import Lead
+from app.models import CallSession, Lead, TranscriptEntry
 from app.scoring import evaluate_lead
 from app.services.notification_service import (
+    DISCLAIMER,
     build_lead_summary_email,
+    build_phone_intake_summary_email,
     notify_lead_created,
+    notify_phone_intake_completed,
     render_lead_summary,
 )
 
@@ -103,3 +106,98 @@ def test_build_lead_summary_email_sets_headers():
     assert message['To'] == 'team@example.com'
     assert message['From'] == 'alerts@example.com'
     assert 'Principal Builders LLC' in message['Subject']
+
+
+def make_call_session_with_transcripts(db_session):
+    call_session = CallSession(
+        twilio_call_sid='CA_PHONE_EMAIL',
+        from_number='+15555550123',
+        to_number='+15555550999',
+        call_status='in-progress',
+        direction='inbound',
+    )
+    db_session.add(call_session)
+    db_session.commit()
+    db_session.refresh(call_session)
+
+    responses = [
+        ('caller:full_name', 'Alex Caller'),
+        ('caller:company_name', 'Caller Contracting LLC'),
+        ('caller:phone_number_confirmation', '+15555550123'),
+        ('caller:email', 'alex@example.com'),
+        ('caller:bond_type_needed', 'bid bond'),
+        ('caller:estimated_contract_amount', '350000'),
+        ('caller:interested_in_public_work', 'yes'),
+        ('caller:credit_score_range', '580-619'),
+        ('caller:bankruptcies', 'yes'),
+        ('caller:foreclosures', 'no'),
+        ('caller:tax_liens', 'yes'),
+        ('caller:judgments', 'no'),
+        ('caller:bond_claims', 'yes'),
+        ('caller:preferred_callback_time', 'Friday morning'),
+    ]
+    for speaker, text in responses:
+        db_session.add(TranscriptEntry(call_session=call_session, speaker=speaker, text=text))
+    db_session.commit()
+    return call_session
+
+
+def test_build_phone_intake_summary_email_includes_required_fields(db_session):
+    call_session = make_call_session_with_transcripts(db_session)
+
+    message = build_phone_intake_summary_email(
+        call_session,
+        call_session.transcripts,
+        make_settings(),
+    )
+    body = message.get_content()
+
+    assert message['To'] == 'team@example.com'
+    assert message['From'] == 'alerts@example.com'
+    assert 'SuretyAI phone intake: Alex Caller - Caller Contracting LLC' in message['Subject']
+    assert 'Caller name: Alex Caller' in body
+    assert 'Company: Caller Contracting LLC' in body
+    assert 'Phone: +15555550123' in body
+    assert 'Email: alex@example.com' in body
+    assert 'Bond type: bid bond' in body
+    assert 'Estimated contract amount: 350000' in body
+    assert 'Credit score range: 580-619' in body
+    assert 'Lead score:' in body
+    assert 'Lead status: Higher Risk / Human Review Required' in body
+    assert '- Recent bankruptcy' in body
+    assert '- Tax liens' in body
+    assert '- Prior bond claims' in body
+    assert '- full name: Alex Caller' in body
+    assert '- preferred callback time: Friday morning' in body
+    assert 'Recommended next step:' in body
+    assert DISCLAIMER in body
+
+
+def test_notify_phone_intake_completed_sends_email_with_mocked_smtp(monkeypatch, db_session):
+    call_session = make_call_session_with_transcripts(db_session)
+    smtp_context = Mock()
+    smtp_client = Mock()
+    smtp_context.__enter__ = Mock(return_value=smtp_client)
+    smtp_context.__exit__ = Mock(return_value=None)
+    smtp_factory = Mock(return_value=smtp_context)
+    monkeypatch.setattr('app.services.notification_service.SMTP', smtp_factory)
+
+    result = notify_phone_intake_completed(db_session, call_session=call_session, settings=make_settings())
+
+    assert result.sent is True
+    smtp_factory.assert_called_once_with('smtp.example.com', 2525, timeout=10)
+    sent_message = smtp_client.send_message.call_args.args[0]
+    body = sent_message.get_content()
+    assert sent_message['To'] == 'team@example.com'
+    assert 'SuretyAI phone intake: Alex Caller' in sent_message['Subject']
+    assert 'Transcript summary:' in body
+    assert DISCLAIMER in body
+
+
+def test_notify_phone_intake_completed_skips_when_smtp_not_configured(db_session):
+    call_session = make_call_session_with_transcripts(db_session)
+
+    result = notify_phone_intake_completed(db_session, call_session=call_session, settings=Settings())
+
+    assert result.sent is False
+    assert result.reason == 'smtp_not_configured'

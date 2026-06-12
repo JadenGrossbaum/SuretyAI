@@ -1,3 +1,5 @@
+from unittest.mock import Mock
+
 from twilio.request_validator import RequestValidator
 
 from app.api.twilio import FINAL_MESSAGE, INTAKE_STEPS, NO_CONSENT_MESSAGE
@@ -99,7 +101,11 @@ def test_twilio_gather_no_consent_hangs_up(client, db_session):
     assert speakers == ['caller:consent', 'system']
 
 
-def test_twilio_gather_completes_flow_after_last_step(client, db_session):
+def test_twilio_gather_completes_flow_after_last_step(client, db_session, monkeypatch):
+    notification_mock = Mock()
+    notification_mock.return_value.sent = True
+    notification_mock.return_value.reason = 'sent'
+    monkeypatch.setattr('app.api.twilio.notify_phone_intake_completed', notification_mock)
     last_step = len(INTAKE_STEPS) - 1
 
     response = client.post(
@@ -120,6 +126,8 @@ def test_twilio_gather_completes_flow_after_last_step(client, db_session):
         .order_by(TranscriptEntry.id)
     ]
     assert speakers == ['caller:preferred_callback_time', 'system']
+    notification_mock.assert_called_once()
+    assert notification_mock.call_args.kwargs['call_session'].twilio_call_sid == 'CA_DONE'
 
 
 def test_twilio_status_updates_existing_call_session(client, db_session):

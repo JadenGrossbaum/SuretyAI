@@ -10,6 +10,7 @@ from twilio.twiml.voice_response import Gather, VoiceResponse
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.services.call_session_service import add_transcript_entry, create_or_update_call_session
+from app.services.notification_service import notify_phone_intake_completed
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/twilio', tags=['twilio'])
@@ -216,7 +217,19 @@ def gather_step(
 
     next_step = step + 1
     if next_step >= len(INTAKE_STEPS):
-        add_transcript_entry(db, call_session=call_session, speaker='system', text=FINAL_MESSAGE)
+        already_completed = any(
+            entry.speaker == 'system' and entry.text == FINAL_MESSAGE
+            for entry in call_session.transcripts
+        )
+        if not already_completed:
+            add_transcript_entry(db, call_session=call_session, speaker='system', text=FINAL_MESSAGE)
+            notification_result = notify_phone_intake_completed(db, call_session=call_session, settings=settings)
+            logger.info(
+                'Phone intake completion notification call_sid=%s sent=%s reason=%s',
+                CallSid,
+                notification_result.sent,
+                notification_result.reason,
+            )
     return Response(content=build_gather_twiml(settings, step=next_step), media_type='application/xml')
 
 

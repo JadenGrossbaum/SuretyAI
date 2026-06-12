@@ -1,0 +1,26 @@
+New SuretyAI phone intake completed
+
+Call session ID: {call_session_id}
+Twilio call SID: {twilio_call_sid}
+
+Caller name: {caller_name}
+Company: {company}
+Phone: {phone}
+Email: {email}
+
+Bond type: {bond_type}
+Estimated contract amount: {estimated_contract_amount}
+Credit score range: {credit_score_range}
+
+Lead score: {lead_score}
+Lead status: {lead_status}
+Risk flags:
+{risk_flags}
+
+Transcript summary:
+{transcript_summary}
+
+Recommended next step:
+{recommended_next_step}
+
+{disclaimer}
